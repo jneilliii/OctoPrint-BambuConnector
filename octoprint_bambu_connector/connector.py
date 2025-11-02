@@ -2,6 +2,7 @@ import enum
 import ftplib
 import logging
 import os
+import re
 import threading
 from collections import namedtuple
 from concurrent.futures import Future
@@ -39,7 +40,7 @@ GCODE_STATE_LOOKUP = {
 }
 
 RELEVANT_EXTENSIONS = (".gcode", ".gco", ".gcode.3mf")
-IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam")
+IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam", "/x1plus", "/keys")
 MODELS_SDCARD_MOUNT = (Printers.X1, Printers.X1C, Printers.X1E)
 
 
@@ -269,15 +270,18 @@ class ConnectedBambuPrinter(
 
         old_state = self.state
 
-        if (
-            old_state == ConnectedPrinterState.CONNECTING
-            and state == ConnectedPrinterState.OPERATIONAL
-        ):
-            self._listener.on_printer_files_available(True)
-            self._listener.on_printer_files_refreshed(
-                self.get_printer_files(refresh=True)
+        if old_state == ConnectedPrinterState.CONNECTING:
+            eventManager().fire(
+                Events.CONNECTED,
+                {
+                    "connector": self.name,
+                    "host": self._host,
+                    "serial": self._serial,
+                    "access_code": self._access_code is not None,
+                },
             )
-            self._logger.info(f"Files: {self._files}")
+            self._listener.on_printer_files_available(True)
+            self.refresh_printer_files()
 
         super().set_state(state, error=error)
 
@@ -606,17 +610,16 @@ class ConnectedBambuPrinter(
                     "subtask_id": "0",  # always 0 for local prints
                     "subtask_name": "",
                     "file": "",  # filename to print, not needed when "url" is specified
-                    "url": url,  # URL to print, root path,
+                    "url": url,  # URL to print, root path, could also be OctoPrint local storage download URL (with api querystring)
                     "md5": "",
-                    # TODO: needs to be taken from some settings *somewhere*
-                    "timelapse": False,
+                    "timelapse": self._plugin_settings.global_get_boolean(["timelapse"]),
                     "bed_type": "auto",
-                    "bed_leveling": True,
-                    "flow_cali": True,
-                    "vibration_cali": True,
-                    "layer_inspect": False,
+                    "bed_leveling": self._plugin_settings.global_get_boolean(["bed_leveling"]),
+                    "flow_cali": self._plugin_settings.global_get_boolean(["flow_cali"]),
+                    "vibration_cali": self._plugin_settings.global_get_boolean(["vibration_cali"]),
+                    "layer_inspect": self._plugin_settings.global_get_boolean(["layer_inspect"]),
                     "ams_mapping": "",
-                    "use_ams": False,
+                    "use_ams": self._plugin_settings.global_get_boolean(["use_ams"]),
                 }
             }
 
@@ -630,59 +633,52 @@ class ConnectedBambuPrinter(
 
     def _recursive_ftp_list(self, ftp: ftplib.FTP, path="/") -> list[FileInfo]:
         result = []
+        lines = []
 
         try:
-            file_list = ftp.nlst(path)
+            ftp.retrlines('LIST', lines.append)
+
+            for line in lines:
+                # Example parsing for a common Unix-like LIST format
+                # drwxr-xr-x 3 user group 4096 Mar 12 23:15 www-null
+                match = re.match(r'.*\s+(\d+)\s+(\w{3}\s+\d+\s+\d{2}:\d{2}|\w{3}\s+\d+\s+\d{4})\s+(.*)', line)
+                if match:
+                    size = int(match.group(1))
+                    date_time_str = match.group(2)
+                    file_name = match.group(3)
+                    file_path = os.path.join(path, file_name)
+
+                    if file_path in IGNORED_FOLDERS:
+                        continue
+
+                    try:
+                        # Attempt to parse year-present format (e.g., "Mar 12 2020")
+                        mtime = datetime.strptime(date_time_str, '%b %d %Y')
+                    except ValueError:
+                        # Attempt to parse year-absent format (e.g., "Mar 12 23:15")
+                        # This requires assuming the current year if the month/day is in the past, or previous year if in the future
+                        # This can be tricky and might require more sophisticated logic
+                        current_year = datetime.now().year
+                        try:
+                            mtime = datetime.strptime(f"{date_time_str} {current_year}", '%b %d %H:%M %Y')
+                        except ValueError:
+                            # Handle other potential formats or parsing errors
+                            mtime = None
+
+                    result.append(
+                        FileInfo(
+                            path=file_path.lstrip("/"),
+                            size=size,
+                            modified=mtime.timestamp(),
+                            permissions="",
+                        )
+                    )
+
         except ftplib.error_perm:
             return result
         except Exception as e:
             self._logger.warning(f"Error retrieving file list for {path}: {e}")
             return result
-
-        for file_name in file_list:
-            file_path = os.path.join(path, file_name)
-
-            if file_path in IGNORED_FOLDERS:
-                continue
-
-            if "." not in file_name:
-                # possible directory, try listing it
-                self._logger.debug(
-                    f"{file_path} looks like a folder, trying to fetch its list"
-                )
-                result += self._recursive_ftp_list(ftp, file_path)
-                continue
-
-            if not any(file_name.endswith(ext) for ext in RELEVANT_EXTENSIONS):
-                continue
-
-            # fetch size
-            try:
-                size = ftp.size(file_path)
-            except Exception as e:
-                self._logger.exception(f"Error retrieving size of {file_path}: {e}")
-                continue
-
-            # fetch date
-            try:
-                date_response = ftp.sendcmd(f"MDTM {file_path}").replace("213 ", "")
-                timestamp = datetime.strptime(date_response, "%Y%m%d%H%M%S").replace(
-                    tzinfo=timezone.utc
-                )
-            except Exception as e:
-                self._logger.exception(
-                    f"Error retrieving modification date of {file_path}: {e}"
-                )
-                continue
-
-            result.append(
-                FileInfo(
-                    path=file_path.lstrip("/"),
-                    size=size,
-                    modified=timestamp.timestamp(),
-                    permissions="",
-                )
-            )
 
         return result
 
@@ -690,6 +686,9 @@ class ConnectedBambuPrinter(
         try:
             ftp = self._client.ftp_connection()
             self._files = self._recursive_ftp_list(ftp)
+            self._listener.on_printer_files_refreshed(
+                self.get_printer_files(refresh=False)
+            )
 
         except Exception as e:
             self._logger.exception(f"Error connecting to FTP: {e}")
@@ -763,20 +762,6 @@ class ConnectedBambuPrinter(
         self._client.move_path(source, target).result()
 
     # ~~ BambuClientListener interface
-
-    def on_bambu_connected(self):
-        self.state = ConnectedPrinterState.OPERATIONAL
-        eventManager().fire(
-            Events.CONNECTED,
-            {
-                "connector": self.name,
-                "host": self._host,
-                "serial": self._serial,
-                "access_code": self._access_code is not None,
-            },
-        )
-        self._listener.on_printer_files_available(True)
-        self.refresh_printer_files()
 
     def on_bambu_disconnected(self, error: str = None):
         self._listener.on_printer_files_available(False)

@@ -45,6 +45,19 @@ class BambuConnectorPlugin(
             logger.setLevel(logging.DEBUG)
             logger.propagate = False
 
+    # ~~ Settings Plugin mixin
+
+    def get_settings_defaults(self):
+        return {
+            "timelapse": False,
+            "bed_leveling": True,
+            "flow_cali": False,
+            "vibration_cali": True,
+            "layer_inspect": False,
+            "use_ams": True,
+            "always_use_default_options": False,
+        }
+
     # ~~ Template Plugin mixin
 
     def get_template_configs(self):
