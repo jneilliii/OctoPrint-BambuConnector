@@ -2,6 +2,7 @@ import enum
 import logging
 import threading
 import os
+import io
 from typing import TYPE_CHECKING, Any, Optional
 
 from octoprint.events import Events, eventManager
@@ -551,7 +552,18 @@ class ConnectedBambuPrinter(
         return path
 
     def download_printer_file(self, path, *args, **kwargs):
-        raise NotImplementedError()
+        try:
+            src = os.path.join("/", path)
+            dest = os.path.join(self._plugin_settings.get_plugin_data_folder(), path)
+            self._client.download_sdcard_file(src, dest)
+            if os.path.exists(dest):
+                with open(dest, "rb") as file:
+                    file_object = io.BytesIO(file.read())
+                # clean up downloaded file to avoid disk usage creep
+                os.remove(dest)
+                return file_object
+        except Exception as exc:
+            self._logger.exception(f"There was an error downloading file {path}")
 
     def delete_printer_file(self, path, *args, **kwargs):
         try:
