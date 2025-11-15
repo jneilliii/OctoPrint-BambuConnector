@@ -8,26 +8,36 @@ $(function () {
     function Bambu_connectorViewModel(parameters) {
         var self = this;
 
-        // assign the injected parameters, e.g.:
-        // self.loginStateViewModel = parameters[0];
-        // self.settingsViewModel = parameters[1];
+        self.settingsViewModel = parameters[0];
 
-        // TODO: Implement your plugin's view model here.
+        self.starting_print = ko.observable(false);
+
+        self.onBeforePrintStart = function(start_print_command, data) {
+            if (data.origin && data.origin === "printer") {
+                self.start_print_command = function() {
+                    start_print_command();
+                    self.starting_print(false);
+                    $("#bambu_connector_print_options").modal('hide');
+                };
+                $("#bambu_connector_print_options").modal('show');
+                return false;
+            }
+            return true;
+        };
+
+        self.accept_print_options = function() {
+            self.starting_print(true);
+            self.settingsViewModel.saveData(undefined, self.start_print_command);
+        };
+
+        self.cancel_print_options = function() {
+            $("#bambu_connector_print_options").modal('hide');
+        };
     }
 
-    /* view model class, parameters for constructor, container to bind to
-     * Please see http://docs.octoprint.org/en/master/plugins/viewmodels.html#registering-custom-viewmodels for more details
-     * and a full list of the available options.
-     */
     OCTOPRINT_VIEWMODELS.push({
         construct: Bambu_connectorViewModel,
-        // ViewModels your plugin depends on, e.g. loginStateViewModel, settingsViewModel, ...
-        dependencies: [
-            /* "loginStateViewModel", "settingsViewModel" */
-        ],
-        // Elements to bind to, e.g. #settings_plugin_bambu_connector, #tab_plugin_bambu_connector, ...
-        elements: [
-            /* ... */
-        ]
+        dependencies: ["settingsViewModel"],
+        elements: ["#settings_plugin_bambu_connector", "#bambu_connector_print_options"]
     });
 });

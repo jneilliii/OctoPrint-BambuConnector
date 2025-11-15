@@ -462,15 +462,15 @@ class ConnectedBambuPrinter(
 
         path = os.path.join("/", self.active_job.path)
 
-        # TODO: pull from start print viewmodel onBeforePrintStart callback or plugin settings
+        # TODO: deal with ams_mapping and plate selection, for now will default to what is set in sliced file and plate 1
         self._client.print_3mf_file(name=path,
                                     plate=1,
-                                    bed=PlateType.COOL_PLATE,
-                                    use_ams=self._client.ams_exists,
+                                    bed=PlateType.AUTO,  # Always assume the sliced gcode file has this set correctly
+                                    use_ams=self._plugin_settings.get_boolean(["use_ams"]),
                                     ams_mapping="",
-                                    bedlevel=True,
-                                    flow=False,
-                                    timelapse=False)
+                                    bedlevel=self._plugin_settings.get_boolean(["bed_leveling"]),
+                                    flow=self._plugin_settings.get_boolean(["flow_cali"]),
+                                    timelapse=self._plugin_settings.get_boolean(["timelapse"]))
 
     def pause_print(self, tags=None, *args, **kwargs):
         if self._client is None:

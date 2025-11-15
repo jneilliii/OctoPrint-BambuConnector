@@ -34,11 +34,26 @@ class BambuConnectorPlugin(
                 "connector": "bambu",
                 "template": "bambu_connector_connection_option.jinja2",
                 "custom_bindings": True,
+            },
+            {
+                "type": "generic",
+                "template": "bambu_connector.jinja2",
+                "custom_bindings": True,
             }
         ]
 
     def is_template_autoescaped(self):
         return True
+
+    # ~~ SettingsPlugin mixin
+
+    def get_settings_defaults(self):
+        return {
+            "bed_leveling": True,
+            "flow_cali": False,
+            "timelapse": False,
+            "use_ams": True
+        }
 
     # ~~ Software update hook
 

@@ -1,0 +1,21 @@
+<div id="bambu_connector_print_options" class="modal hide fade">
+	<div class="modal-header">
+		<h3>{{ _('Bambu Print Options') }}</h3>
+	</div>
+    <div class="modal-body">
+        <div class="row-fluid">
+            <div class="span6">
+                <label class="checkbox"><input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.bambu_connector.bed_leveling"> {{ _('Enable bed leveling') }}</label>
+                <label class="checkbox"><input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.bambu_connector.flow_cali"> {{ _('Enable flow calibration') }}</label>
+            </div>
+            <div class="span6">
+                <label class="checkbox"><input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.bambu_connector.use_ams"> {{ _('Use AMS') }}</label>
+                <label class="checkbox"><input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.bambu_connector.timelapse"> {{ _('Enable timelapse') }}</label>
+            </div>
+        </div>
+	</div>
+	<div class="modal-footer">
+		<button class="btn btn-danger" data-bind="click: cancel_print_options, disable: starting_print"> {{ _('Cancel') }} </button>
+        <button class="btn btn-primary" data-bind="click: accept_print_options, disable: starting_print"><i class="fas fa-sync fa-spin" data-bind="visible: starting_print"></i> {{ _('Print') }} </button>
+	</div>
+</div>
