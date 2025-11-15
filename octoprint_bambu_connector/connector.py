@@ -1,6 +1,7 @@
 import enum
 import logging
 import threading
+import os
 from typing import TYPE_CHECKING, Any, Optional
 
 from octoprint.events import Events, eventManager
@@ -17,6 +18,7 @@ from octoprint.printer.connection import (
 from octoprint.printer.job import PrintJob
 
 from .vendor import bpm
+from .vendor.bpm.bambutools import PlateType
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -158,7 +160,7 @@ class ConnectedBambuPrinter(
         remove_file=True,
         copy_file=False,
         move_file=False,
-        add_folder=False,
+        add_folder=True,
         remove_folder=False,
         copy_folder=False,
         move_folder=False,
@@ -455,7 +457,20 @@ class ConnectedBambuPrinter(
         return job.storage == FileDestinations.PRINTER
 
     def start_print(self, pos=None, user=None, tags=None, *args, **kwargs):
-        raise NotImplementedError()
+        if not self.active_job.storage == FileDestinations.PRINTER:
+            return
+
+        path = os.path.join("/", self.active_job.path)
+
+        # TODO: pull from start print viewmodel onBeforePrintStart callback or plugin settings
+        self._client.print_3mf_file(name=path,
+                                    plate=1,
+                                    bed=PlateType.COOL_PLATE,
+                                    use_ams=True,
+                                    ams_mapping="",
+                                    bedlevel=True,
+                                    flow=False,
+                                    timelapse=False)
 
     def pause_print(self, tags=None, *args, **kwargs):
         if self._client is None:
@@ -510,7 +525,7 @@ class ConnectedBambuPrinter(
         return self._files
 
     def create_printer_folder(self, target: str, *args, **kwargs) -> None:
-        raise NotImplementedError()
+        self._client.make_sdcard_directory(target)
 
     def delete_printer_folder(
         self, target: str, recursive: bool = False, *args, **kwargs
@@ -526,13 +541,26 @@ class ConnectedBambuPrinter(
     def upload_printer_file(
         self, path_or_file, path, upload_callback, *args, **kwargs
     ) -> str:
-        raise NotImplementedError()
+        try:
+            path = os.path.join("/", path)
+            files = self._client.upload_sdcard_file(path_or_file, path)
+            self._files = self._to_printer_files(files.get("children", []))
+            self._listener.on_printer_files_refreshed(self._files)
+        except Exception as exc:
+            self._logger.exception(f"There was an error uploading file {path}")
+        return path
 
     def download_printer_file(self, path, *args, **kwargs):
         raise NotImplementedError()
 
     def delete_printer_file(self, path, *args, **kwargs):
-        raise NotImplementedError()
+        try:
+            path = os.path.join("/", path)
+            files = self._client.delete_sdcard_file(path)
+            self._files = self._to_printer_files(files.get("children", []))
+            self._listener.on_printer_files_refreshed(self._files)
+        except Exception as exc:
+            self._logger.exception(f"There was an error deleting file {path}")
 
     def copy_printer_file(self, source, target, *args, **kwargs):
         raise NotImplementedError()
@@ -558,7 +586,7 @@ class ConnectedBambuPrinter(
         if self.state not in OPERATIONAL_STATES:
             return
 
-        current_path = printer.subtask_name
+        current_path = printer.current_3mf_file
         if not current_path:
             return
 
@@ -660,7 +688,7 @@ class ConnectedBambuPrinter(
         self._progress.progress = float(progress) / 100.0
         self._progress.left_estimate = printer.time_remaining * 60.0
         if self.current_job and self.current_job.size:
-            self._progress.pos = self.current_job.size * self._progress.progress
+            self._progress.pos = int(self.current_job.size * self._progress.progress)
         self._listener.on_printer_job_progress()
 
     def _update_temperatures_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
