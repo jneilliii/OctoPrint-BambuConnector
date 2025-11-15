@@ -18,8 +18,7 @@ requires-python = ">=3.11, <4"
 
 # any additional requirements (besides OctoPrint) should be listed here
 dependencies = [
-  "webcolors",
-  "paho-mqtt",
+  "bambu-printer-manager>=0.5.1",
   "typing-extensions ; python_version<'3.12'",
 ]
 

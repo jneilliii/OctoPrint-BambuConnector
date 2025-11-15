@@ -17,8 +17,8 @@ from octoprint.printer.connection import (
 )
 from octoprint.printer.job import PrintJob
 
-from .vendor import bpm
-from .vendor.bpm.bambutools import PlateType
+import bpm
+from bpm.bambutools import PlateType
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -466,7 +466,7 @@ class ConnectedBambuPrinter(
         self._client.print_3mf_file(name=path,
                                     plate=1,
                                     bed=PlateType.COOL_PLATE,
-                                    use_ams=True,
+                                    use_ams=self._client.ams_exists,
                                     ams_mapping="",
                                     bedlevel=True,
                                     flow=False,
