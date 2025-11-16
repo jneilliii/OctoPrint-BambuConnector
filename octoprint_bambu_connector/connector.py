@@ -160,9 +160,9 @@ class ConnectedBambuPrinter(
         read_file=True,
         remove_file=True,
         copy_file=False,
-        move_file=False,
+        move_file=True,
         add_folder=True,
-        remove_folder=False,
+        remove_folder=True,
         copy_folder=False,
         move_folder=False,
     )
@@ -531,7 +531,11 @@ class ConnectedBambuPrinter(
     def delete_printer_folder(
         self, target: str, recursive: bool = False, *args, **kwargs
     ):
-        raise NotImplementedError()
+        # TODO: delete folder doesn't work unless folder is empty, need to add recursion
+        try:
+            self.delete_printer_file(target)
+        except Exception as exc:
+            self._logger.exception(f"There was an error deleting folder {path}")
 
     def copy_printer_folder(self, source, target, *args, **kwargs):
         raise NotImplementedError()
@@ -555,6 +559,8 @@ class ConnectedBambuPrinter(
         try:
             src = os.path.join("/", path)
             dest = os.path.join(self._plugin_settings.get_plugin_data_folder(), path)
+            dest_path = os.path.split(dest)[0]
+            os.makedirs(dest_path, exist_ok=True)
             self._client.download_sdcard_file(src, dest)
             if os.path.exists(dest):
                 with open(dest, "rb") as file:
@@ -578,7 +584,10 @@ class ConnectedBambuPrinter(
         raise NotImplementedError()
 
     def move_printer_file(self, source, target, *args, **kwargs):
-        raise NotImplementedError()
+        try:
+            self._client.rename_sdcard_file(source, target)
+        except Exception as exc:
+            self._logger.exception(f"There was an error moving file {source}")
 
     # ~~ BPM callback
 
