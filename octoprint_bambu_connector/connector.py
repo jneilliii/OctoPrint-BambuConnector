@@ -1,10 +1,13 @@
 import enum
-import logging
-import threading
-import os
 import io
+import logging
+import math
+import os
+import threading
 from typing import TYPE_CHECKING, Any, Optional
 
+import bpm
+from bpm.bambutools import PlateType
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
 from octoprint.filemanager.storage import StorageCapabilities
@@ -17,9 +20,6 @@ from octoprint.printer.connection import (
     ConnectedPrinterState,
 )
 from octoprint.printer.job import PrintJob
-
-import bpm
-from bpm.bambutools import PlateType
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -34,9 +34,7 @@ GCODE_STATE_LOOKUP = {
 }
 
 
-RELEVANT_EXTENSIONS = (".gcode", ".gco", ".gcode.3mf")
 IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam")
-MODELS_SDCARD_MOUNT = ()
 
 
 if TYPE_CHECKING:
@@ -208,6 +206,8 @@ class ConnectedBambuPrinter(
         self._error = None
 
         self._progress: JobProgress = None
+        self._old_progress: int = None
+        self._old_time_remaining: int = None
 
         self._files: list[PrinterFile] = []
 
@@ -263,8 +263,13 @@ class ConnectedBambuPrinter(
                 if old_state not in PRINTING_STATES and not self.current_job:
                     # we went from not printing to printing without having a job
                     # -> this was triggered by the printer!
-                    self.set_job(PrintJob(storage=FileDestinations.PRINTER, path="???"))
+                    self.set_job(
+                        PrintJob(
+                            storage=FileDestinations.PRINTER, path="???", display="???"
+                        )
+                    )
                     self._listener.on_printer_job_changed(self.current_job)
+                self._listener.on_printer_job_started()
 
             elif old_state in PRINTING_STATES:
                 # we went from printing to not printing, so the current job is done
@@ -464,14 +469,16 @@ class ConnectedBambuPrinter(
         path = os.path.join("/", self.active_job.path)
 
         # TODO: deal with ams_mapping and plate selection, for now will default to what is set in sliced file and plate 1
-        self._client.print_3mf_file(name=path,
-                                    plate=1,
-                                    bed=PlateType.AUTO,  # Always assume the sliced gcode file has this set correctly
-                                    use_ams=self._plugin_settings.get_boolean(["use_ams"]),
-                                    ams_mapping="",
-                                    bedlevel=self._plugin_settings.get_boolean(["bed_leveling"]),
-                                    flow=self._plugin_settings.get_boolean(["flow_cali"]),
-                                    timelapse=self._plugin_settings.get_boolean(["timelapse"]))
+        self._client.print_3mf_file(
+            name=path,
+            plate=1,
+            bed=PlateType.AUTO,  # Always assume the sliced gcode file has this set correctly
+            use_ams=self._plugin_settings.get_boolean(["use_ams"]),
+            ams_mapping="",
+            bedlevel=self._plugin_settings.get_boolean(["bed_leveling"]),
+            flow=self._plugin_settings.get_boolean(["flow_cali"]),
+            timelapse=self._plugin_settings.get_boolean(["timelapse"]),
+        )
 
     def pause_print(self, tags=None, *args, **kwargs):
         if self._client is None:
@@ -552,7 +559,7 @@ class ConnectedBambuPrinter(
             files = self._client.upload_sdcard_file(path_or_file, path)
             self._files = self._to_printer_files(files.get("children", []))
             self._listener.on_printer_files_refreshed(self._files)
-        except Exception as exc:
+        except Exception:
             self._logger.exception(f"There was an error uploading file {path}")
         return path
 
@@ -569,7 +576,7 @@ class ConnectedBambuPrinter(
                 # clean up downloaded file to avoid disk usage creep
                 os.remove(dest)
                 return file_object
-        except Exception as exc:
+        except Exception:
             self._logger.exception(f"There was an error downloading file {path}")
 
     def delete_printer_file(self, path, *args, **kwargs):
@@ -578,7 +585,7 @@ class ConnectedBambuPrinter(
             files = self._client.delete_sdcard_file(path)
             self._files = self._to_printer_files(files.get("children", []))
             self._listener.on_printer_files_refreshed(self._files)
-        except Exception as exc:
+        except Exception:
             self._logger.exception(f"There was an error deleting file {path}")
 
     def copy_printer_file(self, source, target, *args, **kwargs):
@@ -587,7 +594,7 @@ class ConnectedBambuPrinter(
     def move_printer_file(self, source, target, *args, **kwargs):
         try:
             self._client.rename_sdcard_file(source, target)
-        except Exception as exc:
+        except Exception:
             self._logger.exception(f"There was an error moving file {source}")
 
     # ~~ BPM callback
@@ -608,8 +615,11 @@ class ConnectedBambuPrinter(
         if self.state not in OPERATIONAL_STATES:
             return
 
-        current_path = printer.current_3mf_file
-        if not current_path:
+        if printer.current_3mf_file:
+            current_path = printer.current_3mf_file
+        elif printer.gcode_file:
+            current_path = printer.gcode_file
+        else:
             return
 
         if self.current_job and (
@@ -638,13 +648,18 @@ class ConnectedBambuPrinter(
         self._listener.on_printer_job_changed(job)
 
     def _update_state_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
+        old_stage = self._job_stage
+
         self._connection_state = printer.state
         self._gcode_state = GcodeState.for_value(printer.gcode_state)
-        self._current_stage = JobStage.for_value(printer.current_stage)
+        self._job_stage = JobStage.for_value(printer.current_stage)
 
         self._logger.debug(
-            f"STATE UPDATE -- printer_state = {self._connection_state} - gcode_state = {self._gcode_state} - current_stage = {self._current_stage} ({printer.current_stage})"
+            f"STATE UPDATE -- printer_state = {self._connection_state} - gcode_state = {self._gcode_state} - current_stage = {self._job_stage} ({printer.current_stage})"
         )
+
+        if self._job_stage != old_stage and printer.current_stage_text:
+            self._to_terminal(f"Current stage: {printer.current_stage_text}")
 
         new_state = None
 
@@ -654,10 +669,10 @@ class ConnectedBambuPrinter(
                     new_state = ConnectedPrinterState.STARTING
 
                 elif self._gcode_state == GcodeState.RUNNING:
-                    if self._current_stage == JobStage.PRINTING:
+                    if self._job_stage == JobStage.PRINTING:
                         new_state = ConnectedPrinterState.PRINTING
                     elif (
-                        self._current_stage in FINISHING_JOB_STAGES
+                        self._job_stage in FINISHING_JOB_STAGES
                         and self.state == ConnectedPrinterState.PRINTING
                     ):
                         new_state = ConnectedPrinterState.FINISHING
@@ -707,6 +722,17 @@ class ConnectedBambuPrinter(
             # left over from a previous print of the same file
             progress = 0
 
+        if self.state in PRINTING_STATES and (
+            self._old_progress != progress
+            or self._old_time_remaining != printer.time_remaining
+        ):
+            self._to_terminal(
+                f"Progress: {progress}%, time remaining: {self._format_minutes(printer.time_remaining)}"
+            )
+
+        self._old_progress = progress
+        self._old_time_remaining = printer.time_remaining
+
         self._progress.progress = float(progress) / 100.0
         self._progress.left_estimate = printer.time_remaining * 60.0
         if self.current_job and self.current_job.size:
@@ -724,9 +750,19 @@ class ConnectedBambuPrinter(
 
     ##~~ helpers
 
+    def _to_terminal(self, message: str, prefix: str = "<<<"):
+        self._listener.on_printer_logs(f"{prefix} {message}")
+
+    def _format_minutes(self, minutes: int) -> str:
+        hours = math.floor(float(minutes) / 60.0)
+        mins = minutes - hours * 60
+        return f"{hours}h:{mins}m"
+
     def _to_printer_files(self, nodes: list[dict[str, Any]]) -> list[PrinterFile]:
         result = []
         for node in nodes:
+            if node["id"] in IGNORED_FOLDERS:
+                continue
             if "children" in node:
                 result += self._to_printer_files(node["children"])
             else:
