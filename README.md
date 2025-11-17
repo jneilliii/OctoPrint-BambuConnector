@@ -1,17 +1,15 @@
+> [!IMPORTANT]
+>
+> This plugin is not compatible to the current release version of OctoPrint. It requires changes from the `dev` branch
+> of OctoPrint which are going to go into version 1.12.0.
+
 # OctoPrint-BambuConnector
 
-**TODO:** Describe what your plugin does.
+Connector plugin to allow connecting to Bambu printers.
 
 ## Setup
 
-Install via the bundled [Plugin Manager](https://docs.octoprint.org/en/master/bundledplugins/pluginmanager.html)
+Install via the bundled [Plugin Manager](https://docs.octoprint.org/en/main/bundledplugins/pluginmanager.html)
 or manually using this URL:
 
-    https://github.com/jneilliii/OctoPrint-BambuConnector/archive/master.zip
-
-**TODO:** Describe how to install your plugin, if more needs to be done than just installing it via pip or through
-the plugin manager.
-
-## Configuration
-
-**TODO:** Describe your plugin's configuration options (if any).
+    https://github.com/OctoPrint/OctoPrint-BambuConnector/archive/main.zip
