@@ -39,7 +39,7 @@ class BambuConnectorPlugin(
                 "type": "generic",
                 "template": "bambu_connector.jinja2",
                 "custom_bindings": True,
-            }
+            },
         ]
 
     def is_template_autoescaped(self):
@@ -52,7 +52,7 @@ class BambuConnectorPlugin(
             "bed_leveling": True,
             "flow_cali": False,
             "timelapse": False,
-            "use_ams": True
+            "use_ams": True,
         }
 
     # ~~ Software update hook
@@ -76,12 +76,12 @@ def support_gcode_3mf_machinecode(*args, **kwargs):
 
 
 __plugin_name__ = "Bambu Connector"
-__plugin_author__ = "jneilliii"
+__plugin_author__ = "jneilliii, Gina Häußge"
 __plugin_description__ = (
     "A printer connector plugin to support communication with Bambu printers."
 )
 __plugin_license__ = "AGPLv3"
-__plugin_pythoncompat__ = ">=3.9,<4"
+__plugin_pythoncompat__ = ">=3.11,<4"
 __plugin_implementation__ = BambuConnectorPlugin()
 __plugin_hooks__ = {
     "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,

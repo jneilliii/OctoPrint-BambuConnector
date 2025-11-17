@@ -5,7 +5,7 @@
 
 # OctoPrint-BambuConnector
 
-Connector plugin to allow connecting to Bambu printers.
+A printer connector plugin to support communication with Bambu printers.
 
 ## Setup
 
