@@ -49,10 +49,12 @@ class BambuConnectorPlugin(
 
     def get_settings_defaults(self):
         return {
-            "bed_leveling": True,
-            "flow_cali": False,
-            "timelapse": False,
-            "use_ams": True,
+            "default_job_params": {
+                "perform_bed_leveling": True,
+                "perform_flow_cali": False,
+                "enable_timelapse": False,
+                "use_ams": True,
+            }
         }
 
     # ~~ Software update hook

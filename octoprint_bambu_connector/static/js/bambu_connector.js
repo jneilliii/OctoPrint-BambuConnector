@@ -8,36 +8,78 @@ $(function () {
     function BambuConnectorViewModel(parameters) {
         var self = this;
 
-        self.settingsViewModel = parameters[0];
+        self.connectionViewModel = parameters[0];
+        self.settingsViewModel = parameters[1];
 
-        self.starting_print = ko.observable(false);
+        self.printOptionsDialog = undefined;
+        self.callback = undefined;
 
-        self.onBeforePrintStart = function (start_print_command, data) {
-            if (data.origin && data.origin === "printer") {
-                self.start_print_command = function () {
-                    start_print_command();
-                    self.starting_print(false);
-                    $("#bambu_connector_print_options").modal("hide");
-                };
-                $("#bambu_connector_print_options").modal("show");
-                return false;
+        self.useAms = ko.observable(false);
+        self.performBedLeveling = ko.observable(false);
+        self.performFlowCali = ko.observable(false);
+        self.enableTimelapse = ko.observable(false);
+
+        self.onBeforePrintStart = (callback, data) => {
+            const connector = self.connectionViewModel.selectedConnector();
+            if (connector !== "bambu" || data.origin !== "printer") {
+                return;
             }
-            return true;
+
+            if (
+                self.settingsViewModel &&
+                self.settingsViewModel.settings &&
+                self.settingsViewModel.settings.plugins &&
+                self.settingsViewModel.settings.plugins.bambu_connector &&
+                self.settingsViewModel.settings.plugins.bambu_connector.default_job_params
+            ) {
+                const params =
+                    self.settingsViewModel.settings.plugins.bambu_connector
+                        .default_job_params;
+                self.useAms(params.use_ams());
+                self.performBedLeveling(params.perform_bed_leveling());
+                self.performFlowCali(params.perform_flow_cali());
+                self.enableTimelapse(params.enable_timelapse());
+            }
+
+            self.callback = callback;
+            self.showPrintOptions();
+            return false;
         };
 
-        self.accept_print_options = function () {
-            self.starting_print(true);
-            self.settingsViewModel.saveData(undefined, self.start_print_command);
+        self.acceptPrintOptions = () => {
+            if (!self.callback) return;
+            const callback = self.callback;
+            self.callback = undefined;
+
+            self.hidePrintOptions();
+            callback({
+                use_ams: self.useAms(),
+                perform_bed_leveling: self.performBedLeveling(),
+                perform_flow_cali: self.performFlowCali(),
+                enable_timelapse: self.enableTimelapse()
+            });
         };
 
-        self.cancel_print_options = function () {
-            $("#bambu_connector_print_options").modal("hide");
+        self.cancelPrintOptions = () => {
+            self.hidePrintOptions();
+        };
+
+        self.showPrintOptions = () => {
+            self.printOptionsDialog.modal("show");
+        };
+
+        self.hidePrintOptions = () => {
+            self.printOptionsDialog.modal("hide");
+        };
+
+        self.onStartup = () => {
+            self.printOptionsDialog = $("#bambu_connector_print_options");
         };
     }
 
     OCTOPRINT_VIEWMODELS.push({
         construct: BambuConnectorViewModel,
-        dependencies: ["settingsViewModel"],
+        dependencies: ["connectionViewModel", "settingsViewModel"],
         elements: ["#settings_plugin_bambu_connector", "#bambu_connector_print_options"]
     });
 });

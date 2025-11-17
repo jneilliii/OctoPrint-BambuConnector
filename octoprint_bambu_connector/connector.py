@@ -462,35 +462,63 @@ class ConnectedBambuPrinter(
     def supports_job(self, job: PrintJob) -> bool:
         return job.storage == FileDestinations.PRINTER
 
-    def start_print(self, pos=None, user=None, tags=None, *args, **kwargs):
+    def start_print(
+        self, pos=None, user=None, tags=None, params: dict = None, *args, **kwargs
+    ):
         if not self.active_job.storage == FileDestinations.PRINTER:
             return
 
         path = os.path.join("/", self.active_job.path)
+
+        if params is None:
+            params = {}
+
+        job_params = self.active_job.params
+        if job_params is None:
+            job_params = {}
+
+        def fetch_param(param: str, converter: callable = None) -> Any:
+            value = params.get(
+                param,
+                job_params.get(
+                    param, self._plugin_settings.get(["default_job_params", param])
+                ),
+            )
+
+            if converter:
+                return converter(value)
+            return value
+
+        use_ams = fetch_param("use_ams", converter=bool)
+        perform_bed_leveling = fetch_param("perform_bed_leveling", converter=bool)
+        perform_flow_cali = fetch_param("perform_flow_cali", converter=bool)
+        enable_timelapse = fetch_param("enable_timelapse", converter=bool)
+
+        self.set_state(ConnectedPrinterState.STARTING)
 
         # TODO: deal with ams_mapping and plate selection, for now will default to what is set in sliced file and plate 1
         self._client.print_3mf_file(
             name=path,
             plate=1,
             bed=PlateType.AUTO,  # Always assume the sliced gcode file has this set correctly
-            use_ams=self._plugin_settings.get_boolean(["use_ams"]),
+            use_ams=use_ams,
             ams_mapping="",
-            bedlevel=self._plugin_settings.get_boolean(["bed_leveling"]),
-            flow=self._plugin_settings.get_boolean(["flow_cali"]),
-            timelapse=self._plugin_settings.get_boolean(["timelapse"]),
+            bedlevel=perform_bed_leveling,
+            flow=perform_flow_cali,
+            timelapse=enable_timelapse,
         )
 
-    def pause_print(self, tags=None, *args, **kwargs):
+    def pause_print(self, tags=None, params: dict = None, *args, **kwargs):
         if self._client is None:
             return
         self._client.pause_printing()
 
-    def resume_print(self, tags=None, *args, **kwargs):
+    def resume_print(self, tags=None, params: dict = None, *args, **kwargs):
         if self._client is None:
             return
         self._client.resume_printing()
 
-    def cancel_print(self, tags=None, *args, **kwargs):
+    def cancel_print(self, tags=None, params: dict = None, *args, **kwargs):
         if self._client is None:
             return
         self._client.stop_printing()
