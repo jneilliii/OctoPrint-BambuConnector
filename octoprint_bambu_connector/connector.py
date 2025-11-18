@@ -10,7 +10,13 @@ import bpm
 from bpm.bambutools import PlateType
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
-from octoprint.filemanager.storage import StorageCapabilities
+from octoprint.filemanager.storage import (
+    AnalysisFilamentUse,
+    AnalysisResult,
+    MetadataEntry,
+    StorageCapabilities,
+    StorageThumbnail,
+)
 from octoprint.printer import JobProgress, PrinterFile, PrinterFilesMixin
 from octoprint.printer.connection import (
     OPERATIONAL_STATES,
@@ -160,9 +166,11 @@ class ConnectedBambuPrinter(
         copy_file=False,
         move_file=True,
         add_folder=True,
-        remove_folder=False,
+        remove_folder=True,
         copy_folder=False,
         move_folder=False,
+        metadata=True,
+        thumbnails=True,
     )
 
     can_set_job_on_hold = False
@@ -566,12 +574,13 @@ class ConnectedBambuPrinter(
     def delete_printer_folder(
         self, target: str, recursive: bool = False, *args, **kwargs
     ):
-        # TODO: delete folder doesn't work unless folder is empty, need to add recursion
-        # try:
-        #     self.delete_printer_file(target)
-        # except Exception as exc:
-        #     self._logger.exception(f"There was an error deleting folder {path}")
-        raise NotImplementedError()
+        try:
+            path = os.path.join("/", target)
+            files = self._client.delete_sdcard_file(path)
+            self._files = self._to_printer_files(files.get("children", []))
+            self._listener.on_printer_files_refreshed(self._files)
+        except Exception as exc:
+            self._logger.exception(f"There was an error deleting folder {path}")
 
     def copy_printer_folder(self, source, target, *args, **kwargs):
         raise NotImplementedError()
