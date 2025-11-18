@@ -652,8 +652,8 @@ class ConnectedBambuPrinter(
         if self.state not in OPERATIONAL_STATES:
             return
 
-        if printer.current_3mf_file:
-            current_path = printer.current_3mf_file
+        if printer.subtask_name:
+            current_path = printer.subtask_name
         elif printer.gcode_file:
             current_path = printer.gcode_file
         else:
