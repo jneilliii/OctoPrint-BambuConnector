@@ -217,6 +217,15 @@ class ConnectedBambuPrinter(
 
         self._files: list[PrinterFile] = []
 
+        self._printer_time_offset = None
+
+        pto = self._plugin_settings.get(["printer_time_offset"])
+        if pto is not None:
+            try:
+                self._printer_time_offset = float(pto) * 60 * 60
+            except ValueError:
+                self._logger.warning(f"Invalid Printer Time Offset configured: {pto!r}")
+
     @property
     def connection_parameters(self):
         parameters = super().connection_parameters
@@ -829,9 +838,8 @@ class ConnectedBambuPrinter(
                 continue
 
             timestamp = int(node.get("timestamp", 0))
-            # if timestamp > 0:
-            #    # convert to UTC, timestamps from printer appear to be UTC+8
-            #    timestamp -= 8 * 60 * 60  # 8 hours in seconds
+            if timestamp > 0 and self._printer_time_offset is not None:
+                timestamp -= self._printer_time_offset
 
             if "children" in node:
                 if len(node["children"]) == 0:
