@@ -690,6 +690,8 @@ class ConnectedBambuPrinter(
 
         if printer.current_3mf_file:
             current_path = printer.current_3mf_file
+        elif printer.subtask_name and printer.subtask_name.endswith(".gcode.3mf"):
+            current_path = printer.subtask_name
         elif printer.gcode_file:
             current_path = printer.gcode_file
         else:
