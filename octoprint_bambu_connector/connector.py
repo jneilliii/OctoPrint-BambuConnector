@@ -3,6 +3,7 @@ import io
 import logging
 import math
 import os
+import tempfile
 import threading
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -10,14 +11,13 @@ import bpm
 from bpm.bambutools import PlateType
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
-from octoprint.filemanager.storage import (
-    AnalysisFilamentUse,
-    AnalysisResult,
-    MetadataEntry,
-    StorageCapabilities,
-    StorageThumbnail,
+from octoprint.filemanager.storage import StorageCapabilities
+from octoprint.printer import (
+    JobProgress,
+    PrinterFile,
+    PrinterFilesError,
+    PrinterFilesMixin,
 )
-from octoprint.printer import JobProgress, PrinterFile, PrinterFilesMixin
 from octoprint.printer.connection import (
     OPERATIONAL_STATES,
     PRINTING_STATES,
@@ -40,7 +40,7 @@ GCODE_STATE_LOOKUP = {
 }
 
 
-IGNORED_FOLDERS = ("/logger", "/recorder", "/timelapse", "/image", "/ipcam")
+IGNORED_FOLDERS = ("/logger/", "/recorder/", "/timelapse/", "/image/", "/ipcam/")
 
 
 if TYPE_CHECKING:
@@ -166,11 +166,9 @@ class ConnectedBambuPrinter(
         copy_file=False,
         move_file=True,
         add_folder=True,
-        remove_folder=True,
+        remove_folder=False,
         copy_folder=False,
         move_folder=False,
-        metadata=True,
-        thumbnails=True,
     )
 
     can_set_job_on_hold = False
@@ -218,6 +216,15 @@ class ConnectedBambuPrinter(
         self._old_time_remaining: int = None
 
         self._files: list[PrinterFile] = []
+
+        self._printer_time_offset = None
+
+        pto = self._plugin_settings.get(["printer_time_offset"])
+        if pto is not None:
+            try:
+                self._printer_time_offset = float(pto) * 60 * 60
+            except ValueError:
+                self._logger.warning(f"Invalid Printer Time Offset configured: {pto!r}")
 
     @property
     def connection_parameters(self):
@@ -537,6 +544,10 @@ class ConnectedBambuPrinter(
     def printer_files_mounted(self) -> bool:
         return self._client is not None
 
+    def _update_file_cache(self, files: dict):
+        self._files = self._to_printer_files(files.get("children", []))
+        self._listener.on_printer_files_refreshed(self._files)
+
     def refresh_printer_files(
         self, blocking=False, timeout=30, *args, **kwargs
     ) -> None:
@@ -549,8 +560,7 @@ class ConnectedBambuPrinter(
 
         def perform_refresh():
             files = self._client.get_sdcard_contents()
-            self._files = self._to_printer_files(files.get("children", []))
-            self._listener.on_printer_files_refreshed(self._files)
+            self._update_file_cache(files)
 
         thread = threading.Thread(target=perform_refresh)
         thread.daemon = True
@@ -569,18 +579,22 @@ class ConnectedBambuPrinter(
         return self._files
 
     def create_printer_folder(self, target: str, *args, **kwargs) -> None:
-        self._client.make_sdcard_directory(target)
+        try:
+            files = self._client.make_sdcard_directory(target)
+            self._update_file_cache(files)
+            return target
+        except Exception as exc:
+            raise PrinterFilesError("Folder creation failed") from exc
 
     def delete_printer_folder(
         self, target: str, recursive: bool = False, *args, **kwargs
     ):
-        try:
-            path = os.path.join("/", target)
-            files = self._client.delete_sdcard_file(path)
-            self._files = self._to_printer_files(files.get("children", []))
-            self._listener.on_printer_files_refreshed(self._files)
-        except Exception as exc:
-            self._logger.exception(f"There was an error deleting folder {path}")
+        # TODO: delete folder doesn't work unless folder is empty, need to add recursion
+        # try:
+        #     self.delete_printer_file(target)
+        # except Exception as exc:
+        #     self._logger.exception(f"There was an error deleting folder {path}")
+        raise NotImplementedError()
 
     def copy_printer_folder(self, source, target, *args, **kwargs):
         raise NotImplementedError()
@@ -593,28 +607,45 @@ class ConnectedBambuPrinter(
     ) -> str:
         try:
             path = os.path.join("/", path)
-            files = self._client.upload_sdcard_file(path_or_file, path)
-            self._files = self._to_printer_files(files.get("children", []))
-            self._listener.on_printer_files_refreshed(self._files)
-        except Exception:
-            self._logger.exception(f"There was an error uploading file {path}")
-        return path
+
+            if isinstance(path_or_file, str):
+                # this is a path, we can use this right away
+                files = self._client.upload_sdcard_file(path_or_file, path)
+            else:
+                # this is a stream, we need to dump it into a temporary file before we can proceed
+                with tempfile.NamedTemporaryFile(mode="wb", delete=False) as temp:
+                    try:
+                        temp.write(path_or_file.read())
+                        temp.close()
+                        files = self._client.upload_sdcard_file(temp.name, path)
+                    finally:
+                        os.remove(temp.name)
+
+            self._update_file_cache(files)
+            upload_callback(done=True)
+            return path
+        except Exception as exc:
+            upload_callback(failed=True)
+            raise PrinterFilesError(f"There was an error uploading to {path}") from exc
 
     def download_printer_file(self, path, *args, **kwargs):
         try:
             src = os.path.join("/", path)
-            dest = os.path.join(self._plugin_settings.get_plugin_data_folder(), path)
-            dest_path = os.path.split(dest)[0]
-            os.makedirs(dest_path, exist_ok=True)
-            self._client.download_sdcard_file(src, dest)
-            if os.path.exists(dest):
-                with open(dest, "rb") as file:
-                    file_object = io.BytesIO(file.read())
-                # clean up downloaded file to avoid disk usage creep
-                os.remove(dest)
-                return file_object
-        except Exception:
-            self._logger.exception(f"There was an error downloading file {path}")
+
+            with tempfile.NamedTemporaryFile(delete=False) as temp:
+                # delete_on_close=False, delete=True would be better, but delete_on_close is only available from Python 3.12 onward
+                try:
+                    temp.close()
+                    self._client.download_sdcard_file(src, temp.name)
+                    with open(temp.name, "rb") as f:
+                        file_object = io.BytesIO(f.read())
+                    return file_object
+                finally:
+                    os.remove(temp.name)
+        except Exception as exc:
+            message = f"There was an error downloading file {path}"
+            self._logger.exception(message)
+            raise PrinterFilesError(message) from exc
 
     def delete_printer_file(self, path, *args, **kwargs):
         try:
@@ -622,8 +653,10 @@ class ConnectedBambuPrinter(
             files = self._client.delete_sdcard_file(path)
             self._files = self._to_printer_files(files.get("children", []))
             self._listener.on_printer_files_refreshed(self._files)
-        except Exception:
-            self._logger.exception(f"There was an error deleting file {path}")
+        except Exception as exc:
+            message = f"There was an error deleting file {path}"
+            self._logger.exception(message)
+            raise PrinterFilesError(message) from exc
 
     def copy_printer_file(self, source, target, *args, **kwargs):
         raise NotImplementedError()
@@ -631,8 +664,11 @@ class ConnectedBambuPrinter(
     def move_printer_file(self, source, target, *args, **kwargs):
         try:
             self._client.rename_sdcard_file(source, target)
-        except Exception:
-            self._logger.exception(f"There was an error moving file {source}")
+            return target
+        except Exception as exc:
+            message = f"There was an error moving file {source}"
+            self._logger.exception(message)
+            raise PrinterFilesError(message) from exc
 
     # ~~ BPM callback
 
@@ -654,8 +690,6 @@ class ConnectedBambuPrinter(
 
         if printer.current_3mf_file:
             current_path = printer.current_3mf_file
-        elif printer.subtask_name:
-            current_path = printer.subtask_name
         elif printer.gcode_file:
             current_path = printer.gcode_file
         else:
@@ -802,15 +836,30 @@ class ConnectedBambuPrinter(
         for node in nodes:
             if node["id"] in IGNORED_FOLDERS:
                 continue
+
+            timestamp = int(node.get("timestamp", 0))
+            if timestamp > 0 and self._printer_time_offset is not None:
+                timestamp -= self._printer_time_offset
+
             if "children" in node:
-                result += self._to_printer_files(node["children"])
+                if len(node["children"]) == 0:
+                    result.append(
+                        PrinterFile(
+                            path=node["id"][1:],
+                            display=node["name"],
+                            size=node.get("size", 0),
+                            date=timestamp,
+                        )
+                    )
+                else:
+                    result += self._to_printer_files(node["children"])
             else:
                 result.append(
                     PrinterFile(
                         path=node["id"][1:],  # strip leading /
                         display=node["name"],
                         size=node.get("size", 0),
-                        date=int(node.get("timestamp", 0)),
+                        date=timestamp,
                     )
                 )
         return result

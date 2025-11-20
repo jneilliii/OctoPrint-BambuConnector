@@ -36,6 +36,12 @@ class BambuConnectorPlugin(
                 "custom_bindings": True,
             },
             {
+                "type": "settings",
+                "name": gettext("Bambu Connection"),
+                "template": "bambu_connector_settings.jinja2",
+                "custom_bindings": True,
+            },
+            {
                 "type": "generic",
                 "template": "bambu_connector.jinja2",
                 "custom_bindings": True,
@@ -49,12 +55,13 @@ class BambuConnectorPlugin(
 
     def get_settings_defaults(self):
         return {
+            "printer_time_offset": None,
             "default_job_params": {
                 "perform_bed_leveling": True,
                 "perform_flow_cali": False,
                 "enable_timelapse": False,
                 "use_ams": True,
-            }
+            },
         }
 
     # ~~ Software update hook

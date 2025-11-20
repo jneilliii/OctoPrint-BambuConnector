@@ -1,0 +1,28 @@
+<h3>{{ _("Bambu Connector Settings") }}</h3>
+<form class="form-horizontal" onsubmit="return false;">
+    <fieldset id="settings_bambu_connector">
+        <legend>{{ _("Printer Time") }}</legend>
+        <p>
+            {% trans %}
+            If your printer's local time is offset from your own (e.g. because you didn't set it up through Bambulab's phone app and never let it touch their
+            cloud), you can specify the offset in hours here. E.g. if your printer's files are shown as being 7 hours ahead of your local time, enter 7 below.
+        {% endtrans %}
+    </p>
+    <p>
+        {% trans %}
+        Hint: The default timezone of Bambulab printers that never were connected to their app or cloud appears to be UTC+8.
+    {% endtrans %}
+</p>
+<div class="control-group">
+    <label class="control-label" for="settings-bambuConnector-printerTimeOffset">{{ _("Printer Time Offset") }}</label>
+    <div class="controls">
+        <input type="number"
+               step="any"
+               class="input-mini text-right"
+               data-bind="value: settingsViewModel.settings.plugins.bambu_connector.printer_time_offset"
+               id="settings-bambuConnector-printerTimeOffset">
+        <span class="add-on">h</span>
+    </div>
+</div>
+</fieldset>
+</form>
