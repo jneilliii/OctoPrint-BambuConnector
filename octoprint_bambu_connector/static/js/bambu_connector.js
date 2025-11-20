@@ -18,6 +18,7 @@ $(function () {
         self.performBedLeveling = ko.observable(false);
         self.performFlowCali = ko.observable(false);
         self.enableTimelapse = ko.observable(false);
+        self.plateNumber = ko.observable(1);
 
         self.onBeforePrintStart = (callback, data) => {
             const connector = self.connectionViewModel.selectedConnector();
@@ -39,6 +40,7 @@ $(function () {
                 self.performBedLeveling(params.perform_bed_leveling());
                 self.performFlowCali(params.perform_flow_cali());
                 self.enableTimelapse(params.enable_timelapse());
+                self.plateNumber(params.plate_number());
             }
 
             self.callback = callback;
@@ -56,7 +58,8 @@ $(function () {
                 use_ams: self.useAms(),
                 perform_bed_leveling: self.performBedLeveling(),
                 perform_flow_cali: self.performFlowCali(),
-                enable_timelapse: self.enableTimelapse()
+                enable_timelapse: self.enableTimelapse(),
+                plate_number: self.plateNumber()
             });
         };
 

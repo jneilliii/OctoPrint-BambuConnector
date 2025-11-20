@@ -61,6 +61,7 @@ class BambuConnectorPlugin(
                 "perform_flow_cali": False,
                 "enable_timelapse": False,
                 "use_ams": True,
+                "plate_number": 1,
             },
         }
 

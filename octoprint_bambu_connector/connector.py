@@ -508,13 +508,14 @@ class ConnectedBambuPrinter(
         perform_bed_leveling = fetch_param("perform_bed_leveling", converter=bool)
         perform_flow_cali = fetch_param("perform_flow_cali", converter=bool)
         enable_timelapse = fetch_param("enable_timelapse", converter=bool)
+        plate_number = fetch_param("plate_number", converter=int)
 
         self.set_state(ConnectedPrinterState.STARTING)
 
-        # TODO: deal with ams_mapping and plate selection, for now will default to what is set in sliced file and plate 1
+        # TODO: deal with ams_mapping, for now will default to what is set in sliced file
         self._client.print_3mf_file(
             name=path,
-            plate=1,
+            plate=plate_number,
             bed=PlateType.AUTO,  # Always assume the sliced gcode file has this set correctly
             use_ams=use_ams,
             ams_mapping="",
