@@ -1,6 +1,9 @@
 import octoprint.plugin
 from flask_babel import gettext
 from octoprint.logging.handlers import TriggeredRolloverLogHandler
+from octoprint.util.tz import LOCAL_TZ
+
+DEFAULT_PRINTER_TIMEZONE = "Asia/Shanghai"
 
 
 class BambuRolloverLogHandler(TriggeredRolloverLogHandler):
@@ -51,11 +54,24 @@ class BambuConnectorPlugin(
     def is_template_autoescaped(self):
         return True
 
+    def get_template_vars(self):
+        import zoneinfo
+
+        return {
+            "timezones": [
+                x
+                for x in sorted(zoneinfo.available_timezones())
+                if x != DEFAULT_PRINTER_TIMEZONE
+            ],
+            "server_timezone": LOCAL_TZ.tzname(None),
+            "default_printer_timezone": DEFAULT_PRINTER_TIMEZONE,
+        }
+
     # ~~ SettingsPlugin mixin
 
     def get_settings_defaults(self):
         return {
-            "printer_time_offset": None,
+            "printer_timezone": None,
             "default_job_params": {
                 "perform_bed_leveling": True,
                 "perform_flow_cali": False,

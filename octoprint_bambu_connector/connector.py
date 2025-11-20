@@ -1,3 +1,4 @@
+import datetime
 import enum
 import io
 import logging
@@ -5,6 +6,7 @@ import math
 import os
 import tempfile
 import threading
+import zoneinfo
 from typing import TYPE_CHECKING, Any, Optional
 
 import bpm
@@ -26,6 +28,7 @@ from octoprint.printer.connection import (
     ConnectedPrinterState,
 )
 from octoprint.printer.job import PrintJob
+from octoprint.util.tz import LOCAL_TZ
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -40,7 +43,14 @@ GCODE_STATE_LOOKUP = {
 }
 
 
-IGNORED_FOLDERS = ("/logger/", "/recorder/", "/timelapse/", "/image/", "/ipcam/", "/x1plus/")
+IGNORED_FOLDERS = (
+    "/logger/",
+    "/recorder/",
+    "/timelapse/",
+    "/image/",
+    "/ipcam/",
+    "/x1plus/",
+)
 
 
 if TYPE_CHECKING:
@@ -217,14 +227,16 @@ class ConnectedBambuPrinter(
 
         self._files: list[PrinterFile] = []
 
-        self._printer_time_offset = None
+        self._ptz = None
 
-        pto = self._plugin_settings.get(["printer_time_offset"])
-        if pto is not None:
+        timezone_str = self._plugin_settings.get(["printer_timezone"])
+        if timezone_str is not None:
             try:
-                self._printer_time_offset = float(pto) * 60 * 60
-            except ValueError:
-                self._logger.warning(f"Invalid Printer Time Offset configured: {pto!r}")
+                self._ptz = zoneinfo.ZoneInfo(timezone_str)
+            except Exception:
+                self._logger.exception(
+                    f"Cannot load configured printer timezone {timezone_str}, falling back to server timezone"
+                )
 
     @property
     def connection_parameters(self):
@@ -841,8 +853,14 @@ class ConnectedBambuPrinter(
                 continue
 
             timestamp = int(node.get("timestamp", 0))
-            if timestamp > 0 and self._printer_time_offset is not None:
-                timestamp -= self._printer_time_offset
+            if timestamp > 0:
+                if self._ptz:
+                    tz = self._ptz
+                else:
+                    tz = LOCAL_TZ
+                date = datetime.datetime.fromtimestamp(timestamp).replace(tzinfo=tz)
+            else:
+                date = None
 
             if "children" in node:
                 if len(node["children"]) == 0:
@@ -851,7 +869,7 @@ class ConnectedBambuPrinter(
                             path=node["id"][1:],
                             display=node["name"],
                             size=node.get("size", 0),
-                            date=timestamp,
+                            date=date,
                         )
                     )
                 else:
@@ -862,7 +880,7 @@ class ConnectedBambuPrinter(
                         path=node["id"][1:],  # strip leading /
                         display=node["name"],
                         size=node.get("size", 0),
-                        date=timestamp,
+                        date=date,
                     )
                 )
         return result
