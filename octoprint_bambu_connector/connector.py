@@ -40,7 +40,7 @@ GCODE_STATE_LOOKUP = {
 }
 
 
-IGNORED_FOLDERS = ("/logger/", "/recorder/", "/timelapse/", "/image/", "/ipcam/")
+IGNORED_FOLDERS = ("/logger/", "/recorder/", "/timelapse/", "/image/", "/ipcam/", "/x1plus/")
 
 
 if TYPE_CHECKING:
