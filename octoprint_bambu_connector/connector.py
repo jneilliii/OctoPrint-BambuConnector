@@ -704,20 +704,30 @@ class ConnectedBambuPrinter(
     def get_thumbnail(
         self, path, sizehint=None, *args, **kwargs
     ) -> Optional[StorageThumbnail]:
-        return self._to_storage_thumbnail(path, sizehint, path)
+        return self._to_storage_thumbnail(path, sizehint)
 
     def download_thumbnail(self, path, sizehint=None, *args, **kwargs) -> Optional[tuple[StorageThumbnail, IO]]:
-        thumbnail_path = os.path.join(self._plugin_settings.get_plugin_data_folder(), "thumbs", path, "plate_1.png")
-        if not os.path.exists(thumbnail_path):
-            file = self.download_printer_file(path)
-            with zipfile.ZipFile(file, "r") as zipObj:
-                zipInfo = zipObj.getinfo("Metadata/plate_1.png")
-                path, filename = os.path.split(thumbnail_path)
-                zipInfo.filename = filename
-                zipObj.extract(zipInfo, path)
-        if os.path.exists(thumbnail_path):
-            info = self._to_storage_thumbnail(thumbnail_path, sizehint)
-            return info, open(thumbnail_path, mode="rb")
+        thumbnails_path = os.path.join(self._plugin_settings.get_plugin_data_folder(), "thumbs", path)
+        try:
+            if not os.path.exists(thumbnails_path):
+                file = self.download_printer_file(path)
+                with zipfile.ZipFile(file, "r") as zipObj:
+                    for file in zipObj.namelist():
+                        if file.replace("Metadata/", "").startswith("plate") and file.endswith("png"):
+                            zipInfo = zipObj.getinfo(file)
+                            path, filename = os.path.split(file)
+                            zipInfo.filename = filename
+                            zipObj.extract(zipInfo, thumbnails_path)
+
+            thumbnail_path = os.path.join(thumbnails_path, os.listdir(thumbnails_path)[0])
+
+            if os.path.exists(thumbnail_path):
+                info = self._to_storage_thumbnail(thumbnail_path, sizehint)
+                return info, open(thumbnail_path, mode="rb")
+        except Exception as exc:
+            message = f"There was an error extracting thumbnail for {path}"
+            self._logger.exception(message)
+            raise PrinterFilesError(message) from exc
         return None
 
     def _to_storage_thumbnail(
