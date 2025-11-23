@@ -1,3 +1,5 @@
+import re
+
 import datetime
 import enum
 import io
@@ -34,6 +36,7 @@ from octoprint.printer.job import PrintJob
 from octoprint.util.tz import LOCAL_TZ
 from octoprint.schema import BaseModel
 import zipfile
+import re
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -709,14 +712,14 @@ class ConnectedBambuPrinter(
     def download_thumbnail(self, path, sizehint=None, *args, **kwargs) -> Optional[tuple[StorageThumbnail, IO]]:
         thumbnails_path = os.path.join(self._plugin_settings.get_plugin_data_folder(), "thumbs", path)
         try:
-            if not os.path.exists(thumbnails_path):
+            if not os.path.exists(thumbnails_path) or len(os.listdir(thumbnails_path)) == 0:
                 file = self.download_printer_file(path)
-                with zipfile.ZipFile(file, "r") as zipObj:
-                    for file in zipObj.namelist():
-                        if file.replace("Metadata/", "").startswith("plate") and file.endswith("png"):
-                            zipInfo = zipObj.getinfo(file)
-                            path, filename = os.path.split(file)
-                            zipInfo.filename = filename
+                with (zipfile.ZipFile(file, "r") as zipObj):
+                    for zipFileName in zipObj.namelist():
+                        filename_match = re.match(r"Metadata/(?P<filename>plate_\d+.png)", zipFileName)
+                        if filename_match:
+                            zipInfo = zipObj.getinfo(zipFileName)
+                            zipInfo.filename = filename_match.group("filename")
                             zipObj.extract(zipInfo, thumbnails_path)
 
             thumbnail_path = os.path.join(thumbnails_path, os.listdir(thumbnails_path)[0])
