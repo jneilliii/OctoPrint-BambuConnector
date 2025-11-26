@@ -685,8 +685,7 @@ class ConnectedBambuPrinter(
         try:
             path = os.path.join("/", path)
             files = self._client.delete_sdcard_file(path)
-            self._files = self._to_printer_files(files.get("children", []))
-            self._listener.on_printer_files_refreshed(self._files)
+            self._update_file_cache(files)
         except Exception as exc:
             message = f"There was an error deleting file {path}"
             self._logger.exception(message)
@@ -697,7 +696,8 @@ class ConnectedBambuPrinter(
 
     def move_printer_file(self, source, target, *args, **kwargs):
         try:
-            self._client.rename_sdcard_file(source, target)
+            files = self._client.rename_sdcard_file(source, target)
+            self._update_file_cache(files)
             return target
         except Exception as exc:
             message = f"There was an error moving file {source}"
