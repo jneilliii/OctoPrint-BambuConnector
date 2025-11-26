@@ -316,6 +316,10 @@ class ConnectedBambuPrinter(
                     # TODO no clue what best to do here...
                     pass
 
+        else:
+            if old_state in OPERATIONAL_STATES:
+                self._listener.on_printer_files_available(False)
+
         super().set_state(state, error=error)
 
         message = f"State changed from {old_state.name} to {self.state.name}"
@@ -750,6 +754,7 @@ class ConnectedBambuPrinter(
             self._to_terminal(f"Current stage: {printer.current_stage_text}")
 
         new_state = None
+        error = None
 
         if self._connection_state == bpm.bambuprinter.PrinterState.CONNECTED:
             if self._gcode_state in PRINTING_GCODE_STATES:
@@ -783,11 +788,16 @@ class ConnectedBambuPrinter(
                 new_state = ConnectedPrinterState.CLOSED
 
         else:
-            new_state = ConnectedPrinterState.CLOSED
+            internal_error = printer.internalException
+            if internal_error:
+                new_state = ConnectedPrinterState.CLOSED_WITH_ERROR
+                error = str(internal_error)
+            else:
+                new_state = ConnectedPrinterState.CLOSED
 
         if new_state:
             self._state_context = (new_state, printer.current_stage_text)
-            self.set_state(new_state)
+            self.set_state(new_state, error=error)
 
     def _update_progress_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
         if self.current_job is None:
