@@ -7,13 +7,16 @@ import os
 import tempfile
 import threading
 import zoneinfo
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, IO
 
 import bpm
 from bpm.bambutools import PlateType
 from octoprint.events import Events, eventManager
 from octoprint.filemanager import FileDestinations
-from octoprint.filemanager.storage import StorageCapabilities
+from octoprint.filemanager.storage import (
+    StorageCapabilities,
+    StorageThumbnail,
+)
 from octoprint.printer import (
     JobProgress,
     PrinterFile,
@@ -29,6 +32,9 @@ from octoprint.printer.connection import (
 )
 from octoprint.printer.job import PrintJob
 from octoprint.util.tz import LOCAL_TZ
+from octoprint.schema import BaseModel
+import zipfile
+import re
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -57,6 +63,13 @@ if TYPE_CHECKING:
     from octoprint.events import EventManager
     from octoprint.filemanager import FileManager
     from octoprint.plugin import PluginManager, PluginSettings
+
+
+class ThumbnailInfo(BaseModel):
+    width: int
+    height: int
+    size: int
+    relative_path: str
 
 
 class GcodeState(enum.Enum):
@@ -176,9 +189,10 @@ class ConnectedBambuPrinter(
         copy_file=False,
         move_file=True,
         add_folder=True,
-        remove_folder=False,
+        remove_folder=True,
         copy_folder=False,
         move_folder=False,
+        thumbnails=True,
     )
 
     can_set_job_on_hold = False
@@ -606,12 +620,14 @@ class ConnectedBambuPrinter(
     def delete_printer_folder(
         self, target: str, recursive: bool = False, *args, **kwargs
     ):
-        # TODO: delete folder doesn't work unless folder is empty, need to add recursion
-        # try:
-        #     self.delete_printer_file(target)
-        # except Exception as exc:
-        #     self._logger.exception(f"There was an error deleting folder {path}")
-        raise NotImplementedError()
+        try:
+            path = os.path.join("/", target)
+            files = self._client.delete_sdcard_file(path)
+            self._update_file_cache(files)
+        except Exception as exc:
+            message = f"There was an error deleting folder {path}"
+            self._logger.exception(message)
+            raise PrinterFilesError(message) from exc
 
     def copy_printer_folder(self, source, target, *args, **kwargs):
         raise NotImplementedError()
@@ -686,6 +702,59 @@ class ConnectedBambuPrinter(
             message = f"There was an error moving file {source}"
             self._logger.exception(message)
             raise PrinterFilesError(message) from exc
+
+    def has_thumbnail(self, path, *args, **kwargs):
+        return True  # always assume available for testing
+
+    def get_thumbnail(
+        self, path, sizehint=None, *args, **kwargs
+    ) -> Optional[StorageThumbnail]:
+        return self._to_storage_thumbnail(path, sizehint)
+
+    def download_thumbnail(self, path, sizehint=None, *args, **kwargs) -> Optional[tuple[StorageThumbnail, IO]]:
+        thumbnails_path = os.path.join(self._plugin_settings.get_plugin_data_folder(), "thumbs", path)
+        try:
+            if not os.path.exists(thumbnails_path) or len(os.listdir(thumbnails_path)) == 0:
+                file = self.download_printer_file(path)
+                with (zipfile.ZipFile(file, "r") as zipObj):
+                    for zipFileName in zipObj.namelist():
+                        filename_match = re.match(r"Metadata/(?P<filename>plate_\d+.png)", zipFileName)
+                        if filename_match:
+                            zipInfo = zipObj.getinfo(zipFileName)
+                            zipInfo.filename = filename_match.group("filename")
+                            zipObj.extract(zipInfo, thumbnails_path)
+
+            thumbnail_path = os.path.join(thumbnails_path, os.listdir(thumbnails_path)[0])
+
+            if os.path.exists(thumbnail_path):
+                info = self._to_storage_thumbnail(thumbnail_path, sizehint)
+                return info, open(thumbnail_path, mode="rb")
+        except Exception as exc:
+            message = f"There was an error extracting thumbnail for {path}"
+            self._logger.exception(message)
+            raise PrinterFilesError(message) from exc
+        return None
+
+    def _to_storage_thumbnail(
+        self, path: str, sizehint: str
+    ) -> StorageThumbnail:
+        name = path
+        if "/" in path:
+            name = path.rsplit("/", maxsplit=1)[1]
+        stat = os.stat(path)
+        mime = "image/png"
+
+        return StorageThumbnail(
+            name=name,
+            printable=path,
+            sizehint=sizehint or "",
+            mime=mime,
+            size=stat.st_size,
+            last_modified=int(stat.st_mtime),
+        )
+
+    def _thumbnail_for_sizehint(self, path, sizehint=None) -> Optional[ThumbnailInfo]:
+        raise NotImplementedError()
 
     # ~~ BPM callback
 
@@ -891,6 +960,7 @@ class ConnectedBambuPrinter(
                         display=node["name"],
                         size=node.get("size", 0),
                         date=date,
+                        thumbnails=["200x200"]
                     )
                 )
         return result
