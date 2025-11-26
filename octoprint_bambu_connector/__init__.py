@@ -1,3 +1,5 @@
+import os
+
 import octoprint.plugin
 from flask_babel import gettext
 from octoprint.logging.handlers import TriggeredRolloverLogHandler
@@ -24,6 +26,9 @@ class BambuConnectorPlugin(
         ConnectedBambuPrinter._file_manager = self._file_manager
         ConnectedBambuPrinter._plugin_manager = self._plugin_manager
         ConnectedBambuPrinter._plugin_settings = self._settings
+        ConnectedBambuPrinter._thumbs_cache_folder = os.path.join(
+            self.get_plugin_data_folder(), "thumbs"
+        )
 
         self._logging_handler = None
 

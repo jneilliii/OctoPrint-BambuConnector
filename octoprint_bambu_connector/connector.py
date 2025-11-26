@@ -4,10 +4,12 @@ import io
 import logging
 import math
 import os
+import re
 import tempfile
 import threading
+import zipfile
 import zoneinfo
-from typing import TYPE_CHECKING, Any, Optional, IO
+from typing import IO, TYPE_CHECKING, Any, Optional
 
 import bpm
 from bpm.bambutools import PlateType
@@ -31,10 +33,8 @@ from octoprint.printer.connection import (
     ConnectedPrinterState,
 )
 from octoprint.printer.job import PrintJob
-from octoprint.util.tz import LOCAL_TZ
 from octoprint.schema import BaseModel
-import zipfile
-import re
+from octoprint.util.tz import LOCAL_TZ
 
 GCODE_STATE_LOOKUP = {
     "FAILED": ConnectedPrinterState.ERROR,
@@ -212,6 +212,7 @@ class ConnectedBambuPrinter(
     _file_manager: "FileManager" = None
     _plugin_manager: "PluginManager" = None
     _plugin_settings: "PluginSettings" = None
+    _thumbs_cache_folder: str = None
     # /injected
 
     def __init__(self, *args, **kwargs):
@@ -704,30 +705,47 @@ class ConnectedBambuPrinter(
             raise PrinterFilesError(message) from exc
 
     def has_thumbnail(self, path, *args, **kwargs):
-        return True  # always assume available for testing
+        return self._thumbs_cache_folder and path.endswith(".3mf")
 
     def get_thumbnail(
         self, path, sizehint=None, *args, **kwargs
     ) -> Optional[StorageThumbnail]:
-        return self._to_storage_thumbnail(path, sizehint)
+        return self._to_storage_thumbnail(path)
 
-    def download_thumbnail(self, path, sizehint=None, *args, **kwargs) -> Optional[tuple[StorageThumbnail, IO]]:
-        thumbnails_path = os.path.join(self._plugin_settings.get_plugin_data_folder(), "thumbs", path)
+    def download_thumbnail(
+        self, path, sizehint=None, *args, **kwargs
+    ) -> Optional[tuple[StorageThumbnail, IO]]:
+        thumbnails_path = os.path.join(self._thumbs_cache_folder, path)
         try:
-            if not os.path.exists(thumbnails_path) or len(os.listdir(thumbnails_path)) == 0:
+            if (
+                not os.path.exists(thumbnails_path)
+                or len(os.listdir(thumbnails_path)) == 0
+            ):
                 file = self.download_printer_file(path)
-                with (zipfile.ZipFile(file, "r") as zipObj):
+                with zipfile.ZipFile(file, "r") as zipObj:
                     for zipFileName in zipObj.namelist():
-                        filename_match = re.match(r"Metadata/(?P<filename>plate_\d+.png)", zipFileName)
+                        filename_match = re.match(
+                            r"Metadata/(?P<filename>plate_\d+.png)", zipFileName
+                        )
                         if filename_match:
                             zipInfo = zipObj.getinfo(zipFileName)
                             zipInfo.filename = filename_match.group("filename")
                             zipObj.extract(zipInfo, thumbnails_path)
 
-            thumbnail_path = os.path.join(thumbnails_path, os.listdir(thumbnails_path)[0])
+            if not os.path.isdir(thumbnails_path):
+                return None
 
+            try:
+                # touch the path so we know it has recently been accessed
+                os.utime(thumbnails_path, None)
+            except OSError:
+                pass
+
+            thumbnail_path = os.path.join(
+                thumbnails_path, os.listdir(thumbnails_path)[0]
+            )
             if os.path.exists(thumbnail_path):
-                info = self._to_storage_thumbnail(thumbnail_path, sizehint)
+                info = self._to_storage_thumbnail(thumbnail_path)
                 return info, open(thumbnail_path, mode="rb")
         except Exception as exc:
             message = f"There was an error extracting thumbnail for {path}"
@@ -735,9 +753,7 @@ class ConnectedBambuPrinter(
             raise PrinterFilesError(message) from exc
         return None
 
-    def _to_storage_thumbnail(
-        self, path: str, sizehint: str
-    ) -> StorageThumbnail:
+    def _to_storage_thumbnail(self, path: str) -> StorageThumbnail:
         name = path
         if "/" in path:
             name = path.rsplit("/", maxsplit=1)[1]
@@ -747,14 +763,11 @@ class ConnectedBambuPrinter(
         return StorageThumbnail(
             name=name,
             printable=path,
-            sizehint=sizehint or "",
+            sizehint="",
             mime=mime,
             size=stat.st_size,
             last_modified=int(stat.st_mtime),
         )
-
-    def _thumbnail_for_sizehint(self, path, sizehint=None) -> Optional[ThumbnailInfo]:
-        raise NotImplementedError()
 
     # ~~ BPM callback
 
@@ -941,26 +954,34 @@ class ConnectedBambuPrinter(
             else:
                 date = None
 
+            path = node["id"][1:]  # strip leading /
+
             if "children" in node:
+                # folder
                 if len(node["children"]) == 0:
+                    # empty folder
                     result.append(
                         PrinterFile(
-                            path=node["id"][1:],
+                            path=path,
                             display=node["name"],
                             size=node.get("size", 0),
                             date=date,
                         )
                     )
                 else:
+                    # folder contains entries
                     result += self._to_printer_files(node["children"])
+
             else:
+                # single file
                 result.append(
                     PrinterFile(
-                        path=node["id"][1:],  # strip leading /
+                        path=path,
                         display=node["name"],
                         size=node.get("size", 0),
                         date=date,
-                        thumbnails=["200x200"]
+                        thumbnails=[""] if self.has_thumbnail(path) else [],
                     )
                 )
+
         return result
