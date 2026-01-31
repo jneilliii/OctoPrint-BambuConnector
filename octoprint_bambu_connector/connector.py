@@ -228,8 +228,8 @@ class ConnectedBambuPrinter(
 
         self._state = ConnectedPrinterState.CLOSED
         self._state_context: Optional[tuple[ConnectedPrinterState, str]] = None
-        self._connection_state: bpm.bambuprinter.PrinterState = (
-            bpm.bambuprinter.PrinterState.NO_STATE
+        self._connection_state: bpm.bambuprinter.ServiceState = (
+            bpm.bambuprinter.ServiceState.NO_STATE
         )
         self._gcode_state = GcodeState.UNKNOWN
         self._job_stage = JobStage.UNKNOWN
@@ -585,7 +585,7 @@ class ConnectedBambuPrinter(
     ) -> None:
         if (
             not self._client
-            or not self._client.state == bpm.bambuprinter.PrinterState.CONNECTED
+            or not self._client.state == bpm.bambuprinter.ServiceState.CONNECTED
         ):
             self._files = []
             return
@@ -621,8 +621,8 @@ class ConnectedBambuPrinter(
     def delete_printer_folder(
         self, target: str, recursive: bool = False, *args, **kwargs
     ):
+        path = os.path.join("/", target)
         try:
-            path = os.path.join("/", target)
             files = self._client.delete_sdcard_file(path)
             self._update_file_cache(files)
         except Exception as exc:
@@ -833,21 +833,21 @@ class ConnectedBambuPrinter(
     def _update_state_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
         old_stage = self._job_stage
 
-        self._connection_state = printer.state
-        self._gcode_state = GcodeState.for_value(printer.gcode_state)
-        self._job_stage = JobStage.for_value(printer.current_stage)
+        self._connection_state = printer.service_state
+        self._gcode_state = GcodeState.for_value(printer.printer_state.gcode_state)
+        self._job_stage = JobStage.for_value(printer.printer_state.current_stage_id)
 
         self._logger.debug(
-            f"STATE UPDATE -- printer_state = {self._connection_state} - gcode_state = {self._gcode_state} - current_stage = {self._job_stage} ({printer.current_stage})"
+            f"STATE UPDATE -- printer_state = {self._connection_state} - gcode_state = {self._gcode_state} - current_stage = {self._job_stage} ({printer.printer_state.current_stage_id})"
         )
 
-        if self._job_stage != old_stage and printer.current_stage_text:
-            self._to_terminal(f"Current stage: {printer.current_stage_text}")
+        if self._job_stage != old_stage and printer.printer_state.current_stage_name:
+            self._to_terminal(f"Current stage: {printer.printer_state.current_stage_name}")
 
         new_state = None
         error = None
 
-        if self._connection_state == bpm.bambuprinter.PrinterState.CONNECTED:
+        if self._connection_state == bpm.bambuprinter.ServiceState.CONNECTED:
             if self._gcode_state in PRINTING_GCODE_STATES:
                 if self._gcode_state == GcodeState.PREPARE:
                     new_state = ConnectedPrinterState.STARTING
@@ -887,7 +887,7 @@ class ConnectedBambuPrinter(
                 new_state = ConnectedPrinterState.CLOSED
 
         if new_state:
-            self._state_context = (new_state, printer.current_stage_text)
+            self._state_context = (new_state, printer.printer_state.current_stage_name)
             self.set_state(new_state, error=error)
 
     def _update_progress_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
@@ -906,24 +906,24 @@ class ConnectedBambuPrinter(
                 cleaned_elapsed=0.0,
             )
 
-        progress = printer.percent_complete
+        progress = printer.printer_state.print_percentage
         if self.state == ConnectedPrinterState.STARTING and progress == 100:
             # left over from a previous print of the same file
             progress = 0
 
         if self.state in PRINTING_STATES and (
             self._old_progress != progress
-            or self._old_time_remaining != printer.time_remaining
+            or self._old_time_remaining != printer.printer_state.remaining_minutes
         ):
             self._to_terminal(
-                f"Progress: {progress}%, time remaining: {self._format_minutes(printer.time_remaining)}"
+                f"Progress: {progress}%, time remaining: {self._format_minutes(printer.printer_state.remaining_minutes)}"
             )
 
         self._old_progress = progress
-        self._old_time_remaining = printer.time_remaining
+        self._old_time_remaining = printer.printer_state.remaining_minutes
 
         self._progress.progress = float(progress) / 100.0
-        self._progress.left_estimate = printer.time_remaining * 60.0
+        self._progress.left_estimate = printer.printer_state.remaining_minutes * 60.0
         if self.current_job and self.current_job.size:
             self._progress.pos = int(self.current_job.size * self._progress.progress)
         self._listener.on_printer_job_progress()
@@ -931,9 +931,9 @@ class ConnectedBambuPrinter(
     def _update_temperatures_from_state(self, printer: bpm.bambuprinter.BambuPrinter):
         self._listener.on_printer_temperature_update(
             {
-                "tool0": (printer.tool_temp, printer.tool_temp_target),
-                "bed": (printer.bed_temp, printer.bed_temp_target),
-                "chamber": (printer.chamber_temp, printer.chamber_temp_target),
+                "tool0": (printer.printer_state.active_nozzle_temp, printer.printer_state.active_nozzle_temp_target),
+                "bed": (printer.printer_state.climate.bed_temp, printer.printer_state.climate.bed_temp_target),
+                "chamber": (printer.printer_state.climate.chamber_temp, printer.printer_state.climate.chamber_temp_target),
             }
         )
 
