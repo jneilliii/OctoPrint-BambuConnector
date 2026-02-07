@@ -585,7 +585,7 @@ class ConnectedBambuPrinter(
     ) -> None:
         if (
             not self._client
-            or not self._client.state == bpm.bambuprinter.ServiceState.CONNECTED.value
+            or not self._client.service_state == bpm.bambuprinter.ServiceState.CONNECTED
         ):
             self._files = []
             return
